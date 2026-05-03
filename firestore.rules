@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // User Profiles
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if isOwner(userId) && isValidUser(incoming()) && 
+                    incoming().diff(existing()).affectedKeys().hasOnly(['displayName']);
+      
+      function isValidUser(data) {
+        return data.uid == request.auth.uid &&
+               data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 100 &&
+               data.email == request.auth.token.email &&
+               data.createdAt == request.time;
+      }
+    }
+
+    // Orders
+    match /orders/{orderId} {
+      // For dashboard analysis, we allow reading all orders for the admin.
+      // In a real app, we'd check for an admin role. For now, we'll allow public read
+      // for the purpose of this demo dashboard, but strictly control creation.
+      allow read: if true; 
+      allow create: if isSignedIn() && isValidOrder(incoming());
+      allow update, delete: if false;
+
+      function isValidOrder(data) {
+        return data.userId == request.auth.uid &&
+               data.total is number && data.total >= 0 &&
+               data.status in ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'] &&
+               data.createdAt == request.time;
+      }
+    }
+  }
+}
